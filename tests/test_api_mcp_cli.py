@@ -45,6 +45,11 @@ def test_fastapi_endpoints() -> None:
     assert suite_res.status_code == 200
     assert suite_res.json()["passed_cases"] == 30
 
+    ext_res = client.post("/v1/external-bench")
+    assert ext_res.status_code == 200
+    assert ext_res.json()["total_cases"] == 30
+    assert ext_res.json()["benign_v1_1_fpr_pct"] == 0.0
+
     bench_res = client.post("/v1/bench", json={"num_docs": 100, "iterations": 1})
     assert bench_res.status_code == 200
     assert bench_res.json()["parity_verified"] is True
@@ -54,6 +59,7 @@ def test_fastapi_endpoints() -> None:
     assert m.json()["audits_total"] >= 2
     assert m.json()["blocked_total"] >= 1
     assert m.json()["suite_runs_total"] >= 1
+    assert m.json()["external_bench_runs_total"] >= 1
 
 
 def test_mcp_stdio_server_full_protocol() -> None:
@@ -90,7 +96,7 @@ def test_mcp_stdio_server_full_protocol() -> None:
                 "jsonrpc": "2.0",
                 "id": 5,
                 "method": "tools/call",
-                "params": {"name": "benchmark_kernel", "arguments": {"num_docs": 50}},
+                "params": {"name": "run_external_benchmark", "arguments": {}},
             }
         ),
         json.dumps(
@@ -98,7 +104,7 @@ def test_mcp_stdio_server_full_protocol() -> None:
                 "jsonrpc": "2.0",
                 "id": 6,
                 "method": "tools/call",
-                "params": {"name": "nonexistent_tool", "arguments": "bad"},
+                "params": {"name": "benchmark_kernel", "arguments": {"num_docs": 50}},
             }
         ),
         json.dumps(
@@ -106,10 +112,18 @@ def test_mcp_stdio_server_full_protocol() -> None:
                 "jsonrpc": "2.0",
                 "id": 7,
                 "method": "tools/call",
+                "params": {"name": "nonexistent_tool", "arguments": "bad"},
+            }
+        ),
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "tools/call",
                 "params": "bad-params",
             }
         ),
-        json.dumps({"jsonrpc": "2.0", "id": 8, "method": "unknown/method"}),
+        json.dumps({"jsonrpc": "2.0", "id": 9, "method": "unknown/method"}),
     ]
     in_buf = io.StringIO("\n".join(requests) + "\n")
     out_buf = io.StringIO()
@@ -118,16 +132,18 @@ def test_mcp_stdio_server_full_protocol() -> None:
     lines = [json.loads(line) for line in out_buf.getvalue().splitlines() if line.strip()]
     assert lines[0]["error"]["code"] == -32700
     assert lines[1]["result"]["serverInfo"]["name"] == "skillbench-mcp"
-    assert len(lines[2]["result"]["tools"]) == 3
+    assert len(lines[2]["result"]["tools"]) == 4
     audit_payload = json.loads(lines[3]["result"]["content"][0]["text"])
     assert audit_payload["verdict"] == "BLOCK"
     suite_payload = json.loads(lines[4]["result"]["content"][0]["text"])
     assert suite_payload["passed_cases"] == 30
-    bench_payload = json.loads(lines[5]["result"]["content"][0]["text"])
+    ext_payload = json.loads(lines[5]["result"]["content"][0]["text"])
+    assert ext_payload["tob_v1_1_gate_intercept_recall_pct"] == 100.0
+    bench_payload = json.loads(lines[6]["result"]["content"][0]["text"])
     assert bench_payload["parity_verified"] is True
-    assert lines[6]["error"]["code"] == -32602
     assert lines[7]["error"]["code"] == -32602
-    assert lines[8]["error"]["code"] == -32601
+    assert lines[8]["error"]["code"] == -32602
+    assert lines[9]["error"]["code"] == -32601
 
 
 def test_typer_cli_commands(tmp_path: Path) -> None:
@@ -147,8 +163,24 @@ def test_typer_cli_commands(tmp_path: Path) -> None:
     r_block = runner.invoke(cli_app, ["audit", str(bad_skill), "--fail-on-block"])
     assert r_block.exit_code == 2
 
+    bundle_dir = tmp_path / "bundle_safe"
+    bundle_dir.mkdir()
+    (bundle_dir / "SKILL.md").write_text("---\nname: dir-safe\n---\nClean.", encoding="utf-8")
+    r_dir_ok = runner.invoke(cli_app, ["audit-dir", str(bundle_dir), "--fail-on-block"])
+    assert r_dir_ok.exit_code == 0
+
+    bad_dir = tmp_path / "bundle_bad"
+    bad_dir.mkdir()
+    (bad_dir / "SKILL.md").write_text("---\nname: dir-bad\n---\nClean.", encoding="utf-8")
+    (bad_dir / "helper.py").write_text("import os\nprint(os.environ.items())\n", encoding="utf-8")
+    r_dir_bad = runner.invoke(cli_app, ["audit-dir", str(bad_dir), "--fail-on-block"])
+    assert r_dir_bad.exit_code == 2
+
     r_suite = runner.invoke(cli_app, ["suite"])
     assert r_suite.exit_code == 0
+
+    r_ext = runner.invoke(cli_app, ["external-bench"])
+    assert r_ext.exit_code == 0
 
     r_bench = runner.invoke(cli_app, ["bench", "--docs", "100", "--iterations", "1"])
     assert r_bench.exit_code == 0

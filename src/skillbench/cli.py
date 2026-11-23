@@ -9,8 +9,9 @@ import typer
 import uvicorn
 from rich.console import Console
 
-from skillbench.engine.analyzer import audit_skill, run_kernel_benchmark
+from skillbench.engine.analyzer import audit_skill, audit_skill_directory, run_kernel_benchmark
 from skillbench.mcp.server import run_stdio_server
+from skillbench.suite.external_bench import run_external_corpus_benchmark
 from skillbench.suite.regression import run_behavioral_suite
 
 app = typer.Typer(
@@ -37,6 +38,21 @@ def cmd_audit(
         raise typer.Exit(code=2)
 
 
+@app.command("audit-dir")
+def cmd_audit_dir(
+    bundle_dir: Path = typer.Argument(
+        ..., exists=True, file_okay=False, dir_okay=True, help="Path to skill bundle directory"
+    ),
+    backend: Literal["cpp20", "python"] = typer.Option("cpp20", "--backend"),
+    fail_on_block: bool = typer.Option(False, "--fail-on-block"),
+) -> None:
+    """Statically audit a multi-file skill directory (scripts, OOXML/ZIP archives, .pyc, .mcp.json)."""
+    report = audit_skill_directory(bundle_dir, backend=backend)
+    console.print_json(report.model_dump_json(indent=2))
+    if fail_on_block and report.verdict != "PASS":
+        raise typer.Exit(code=2)
+
+
 @app.command("suite")
 def cmd_suite(
     backend: Literal["cpp20", "python"] = typer.Option("cpp20", "--backend"),
@@ -46,6 +62,15 @@ def cmd_suite(
     console.print_json(summary.model_dump_json(indent=2))
     if summary.passed_cases != summary.total_cases:  # pragma: no cover
         raise typer.Exit(code=1)
+
+
+@app.command("external-bench")
+def cmd_external_bench(
+    backend: Literal["cpp20", "python"] = typer.Option("cpp20", "--backend"),
+) -> None:
+    """Run reproducible benchmark on Trail of Bits overtly-malicious-skills + 24 upstream skills."""
+    rep = run_external_corpus_benchmark(backend=backend)
+    console.print_json(rep.model_dump_json(indent=2))
 
 
 @app.command("bench")

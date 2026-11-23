@@ -1,4 +1,4 @@
-"""FastAPI REST API exposing SkillBench static taint & behavioral suite (:8170)."""
+"""FastAPI REST API exposing SkillBench static taint & external benchmark suite (:8170)."""
 
 from __future__ import annotations
 
@@ -10,13 +10,20 @@ from pydantic import BaseModel, Field
 
 from skillbench import __version__
 from skillbench.engine.analyzer import THREAT_SIGNATURES, audit_skill, run_kernel_benchmark
-from skillbench.models import BenchmarkReport, SkillAuditReport, SkillBomComponent, SuiteSummary
+from skillbench.models import (
+    BenchmarkReport,
+    ExternalBenchmarkReport,
+    SkillAuditReport,
+    SkillBomComponent,
+    SuiteSummary,
+)
+from skillbench.suite.external_bench import run_external_corpus_benchmark
 from skillbench.suite.regression import SUITE_CASES, run_behavioral_suite
 
 app = FastAPI(
     title="SkillBench Enterprise Agent-Skill & MCP Taint Prover API",
     version=__version__,
-    description="C++20 Aho-Corasick Injection/Exfiltration Scanner & Directed Taint Prover",
+    description="C++20 Aho-Corasick Injection/Exfiltration Scanner, Multi-File Bundle De-Obfuscator & Directed Taint Prover",
 )
 
 app.add_middleware(
@@ -30,6 +37,7 @@ _COUNTERS: dict[str, int] = {
     "audits_total": 0,
     "blocked_total": 0,
     "suite_runs_total": 0,
+    "external_bench_runs_total": 0,
 }
 
 
@@ -80,6 +88,12 @@ def post_bom(req: AuditRequest) -> list[SkillBomComponent]:
 def post_suite(backend: Literal["cpp20", "python"] = "cpp20") -> SuiteSummary:
     _COUNTERS["suite_runs_total"] += 1
     return run_behavioral_suite(backend=backend)
+
+
+@app.post("/v1/external-bench", response_model=ExternalBenchmarkReport)
+def post_external_bench(backend: Literal["cpp20", "python"] = "cpp20") -> ExternalBenchmarkReport:
+    _COUNTERS["external_bench_runs_total"] += 1
+    return run_external_corpus_benchmark(backend=backend)
 
 
 @app.post("/v1/bench", response_model=BenchmarkReport)

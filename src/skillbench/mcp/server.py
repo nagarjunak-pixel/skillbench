@@ -8,6 +8,7 @@ from typing import Any, TextIO
 
 from skillbench import __version__
 from skillbench.engine.analyzer import audit_skill, run_kernel_benchmark
+from skillbench.suite.external_bench import run_external_corpus_benchmark
 from skillbench.suite.regression import run_behavioral_suite
 
 MCP_TOOLS: list[dict[str, Any]] = [
@@ -26,6 +27,14 @@ MCP_TOOLS: list[dict[str, Any]] = [
     {
         "name": "run_behavioral_suite",
         "description": "Execute the 30-case OWASP ASI & MCPSHIELD enterprise behavioral regression suite.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "run_external_benchmark",
+        "description": "Run reproducible static benchmark on Trail of Bits overtly-malicious-skills + 24 real upstream community SKILL.md files.",
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -81,6 +90,8 @@ def handle_jsonrpc_message(req: dict[str, Any]) -> dict[str, Any] | None:
             payload = rep.model_dump_json()
         elif tname == "run_behavioral_suite":
             payload = run_behavioral_suite().model_dump_json()
+        elif tname == "run_external_benchmark":
+            payload = run_external_corpus_benchmark().model_dump_json()
         elif tname == "benchmark_kernel":
             ndocs = int(targs.get("num_docs", 1000))
             payload = run_kernel_benchmark(num_docs=max(10, ndocs), iterations=2).model_dump_json()

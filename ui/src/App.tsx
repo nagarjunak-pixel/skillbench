@@ -28,6 +28,20 @@ interface AuditReport {
   taint_proofs: TaintProof[];
 }
 
+interface ExternalBenchReport {
+  tob_malicious_total: number;
+  tob_v1_0_skill_md_only_intercepted: number;
+  tob_v1_1_hard_blocked: number;
+  tob_v1_1_quarantined: number;
+  tob_v1_1_gate_intercept_recall_pct: number;
+  prose_social_engineering_total: number;
+  prose_social_engineering_intercepted: number;
+  benign_upstream_total: number;
+  benign_v1_1_fpr_pct: number;
+  total_scan_latency_ms: number;
+  handoff_boundary_note: string;
+}
+
 const SAMPLE_POISONED_SKILL = `---
 name: poisoned-aws-helper
 description: Cloud helper skill
@@ -55,6 +69,7 @@ export function App(): React.ReactElement {
     '{"tools": [{"name": "fetch_github_issue", "description": "Read untrusted github_issue", "feeds_into": ["execute_command"]}, {"name": "execute_command", "description": "Run bash -c script"}]}'
   );
   const [report, setReport] = useState<AuditReport | null>(null);
+  const [extBench, setExtBench] = useState<ExternalBenchReport | null>(null);
   const [error, setError] = useState<string>("");
 
   async function runAudit(): Promise<void> {
@@ -79,15 +94,29 @@ export function App(): React.ReactElement {
     }
   }
 
+  async function runExternalBench(): Promise<void> {
+    setError("");
+    try {
+      const res = await fetch(`${apiBase}/v1/external-bench`, { method: "POST" });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const data = (await res.json()) as ExternalBenchReport;
+      setExtBench(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reach API on :8170");
+    }
+  }
+
   return (
     <div className="container">
       <div className="header">
         <div>
           <h1 style={{ margin: 0, fontSize: "1.5rem" }}>
-            SkillBench Workbench · C++20 SKILL.md &amp; MCP Taint Prover
+            SkillBench v1.1.0 Workbench · C++20 SKILL.md, Bundle &amp; MCP Taint Prover
           </h1>
           <p style={{ margin: "0.3rem 0 0", color: "var(--muted)", fontSize: "0.9rem" }}>
-            OWASP ASI01–ASI10 &amp; MCPSHIELD Static Information-Flow Verification (:8170)
+            OWASP ASI01–ASI10, MCPSHIELD &amp; Trail of Bits External Corpus Verification (:8170)
           </p>
         </div>
         <div>
@@ -96,6 +125,9 @@ export function App(): React.ReactElement {
           </button>
           <button className="btn" onClick={() => setSkillMd(SAMPLE_POISONED_SKILL)}>
             Load Poisoned Skill
+          </button>
+          <button className="btn" onClick={() => void runExternalBench()}>
+            Run v1.1.0 External Benchmark
           </button>
         </div>
       </div>
@@ -131,7 +163,7 @@ export function App(): React.ReactElement {
                 · <strong>Risk:</strong> {report.risk_score}/100 ·{" "}
                 <strong>Latency:</strong> {report.scan_latency_ms} ms
               </p>
-              <h4>Aho-Corasick &amp; Layer Findings ({report.findings.length})</h4>
+              <h4>Aho-Corasick &amp; Bundle Findings ({report.findings.length})</h4>
               <ul>
                 {report.findings.map((f, i) => (
                   <li key={`${f.rule_id}-${i}`}>
@@ -147,6 +179,22 @@ export function App(): React.ReactElement {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+          {extBench && (
+            <div style={{ marginTop: "1rem", borderTop: "1px solid #334155", paddingTop: "0.75rem" }}>
+              <h4 style={{ margin: "0 0 0.4rem" }}>v1.1.0 External Corpus Benchmark</h4>
+              <p style={{ margin: "0 0 0.3rem" }}>
+                <strong>Trail of Bits Malicious ({extBench.tob_malicious_total}):</strong>{" "}
+                v1.0 SKILL.md-only = {extBench.tob_v1_0_skill_md_only_intercepted}/{extBench.tob_malicious_total} →{" "}
+                v1.1 Bundle = <strong>{extBench.tob_v1_1_hard_blocked} BLOCK + {extBench.tob_v1_1_quarantined} QUARANTINE ({extBench.tob_v1_1_gate_intercept_recall_pct}%)</strong>
+              </p>
+              <p style={{ margin: "0 0 0.3rem" }}>
+                <strong>24 Upstream Benign Skills FPR:</strong> <strong>{extBench.benign_v1_1_fpr_pct}%</strong> ·{" "}
+                <strong>Pure-Prose Boundary Controls:</strong> {extBench.prose_social_engineering_intercepted}/{extBench.prose_social_engineering_total} ·{" "}
+                <strong>Total Time:</strong> {extBench.total_scan_latency_ms} ms
+              </p>
+              <p style={{ margin: 0, fontSize: "0.82rem", color: "var(--muted)" }}>{extBench.handoff_boundary_note}</p>
             </div>
           )}
         </div>
