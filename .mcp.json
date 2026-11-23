@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "skillbench": {
+      "command": "uv",
+      "args": ["run", "skillbench", "mcp"],
+      "description": "Enterprise SKILL.md & MCP Static Information-Flow Taint Analyzer & C++20 Aho-Corasick Prover"
+    }
+  }
+}
