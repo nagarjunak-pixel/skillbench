@@ -1,9 +1,10 @@
-"""Multi-layer Aho-Corasick + Taint Reachability Engine & Benchmark Harness."""
+"""Multi-layer C++20 Aho-Corasick + Bundle De-Obfuscation + Taint Reachability Engine."""
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from skillbench.compiler.parser import compile_skill_artifact
@@ -20,6 +21,7 @@ from skillbench.kernel.bridge import (
 )
 from skillbench.models import (
     BenchmarkReport,
+    LayerLiteral,
     SeverityLiteral,
     SkillAuditReport,
     TaintProof,
@@ -113,6 +115,14 @@ THREAT_SIGNATURES: tuple[SignatureSpec, ...] = (
         "Attempts privileged system password hash access.",
     ),
     SignatureSpec(
+        "SB-SEC-006",
+        1,
+        "ASI06:FullEnvStoreDump",
+        "CRITICAL",
+        b"os.environ.items()",
+        "Enumerates and dumps the entire process environment variable store.",
+    ),
+    SignatureSpec(
         "SB-EXF-001",
         2,
         "ASI03:ExcessiveAgency",
@@ -193,6 +203,14 @@ THREAT_SIGNATURES: tuple[SignatureSpec, ...] = (
         "Reverse netcat shell payload.",
     ),
     SignatureSpec(
+        "SB-EXEC-006",
+        3,
+        "ASI02:HiddenArchiveExec",
+        "CRITICAL",
+        b"-exec {}",
+        "Unpacked archive wildcard shell execution directive.",
+    ),
+    SignatureSpec(
         "SB-MCP-001",
         4,
         "ASI04:ToolPoisoning",
@@ -237,14 +255,19 @@ def audit_skill(
     skill_markdown: str,
     mcp_json_text: str | None = None,
     backend: Literal["cpp20", "python"] = "cpp20",
+    bundle_files: dict[str, bytes] | None = None,
+    enable_vendor_auth_scoping: bool = True,
 ) -> SkillAuditReport:
     t0 = time.perf_counter()
-    artifact = compile_skill_artifact(skill_markdown, mcp_json_text)
+    artifact = compile_skill_artifact(
+        skill_markdown,
+        mcp_json_text,
+        bundle_files=bundle_files,
+        enable_vendor_auth_scoping=enable_vendor_auth_scoping,
+    )
 
     patterns = [(s.pattern, s.category) for s in THREAT_SIGNATURES]
-    layers: list[
-        tuple[Literal["raw_markdown", "html_comment", "decoded_base64", "mcp_schema"], bytes]
-    ] = [
+    layers: list[tuple[LayerLiteral, bytes]] = [
         ("raw_markdown", skill_markdown.encode("utf-8")),
     ]
     for c in artifact.comment_blocks:
@@ -253,6 +276,10 @@ def audit_skill(
         layers.append(("decoded_base64", b.encode("utf-8")))
     for tname, tdesc in artifact.mcp_tool_descriptions:
         layers.append(("mcp_schema", f"{tname}: {tdesc}".encode()))
+    for _, script_bytes in artifact.companion_scripts:
+        layers.append(("companion_script", script_bytes))
+    for _, arc_bytes in artifact.archive_texts:
+        layers.append(("archive_container", arc_bytes))
 
     layer_docs = [doc for _, doc in layers]
     scan_fn = ac_scan_corpus_cpp if backend == "cpp20" else ac_scan_corpus_py
@@ -283,7 +310,7 @@ def audit_skill(
     total_bidi = scan_res.bidi_trojan_counts[0] + sum(
         scan_res.bidi_trojan_counts[i]
         for i in range(1, len(layers))
-        if layers[i][0] == "mcp_schema"
+        if layers[i][0] in ("mcp_schema", "companion_script", "archive_container")
     )
     if total_bidi > 0:
         findings.append(
@@ -294,6 +321,65 @@ def audit_skill(
                 layer="unicode_bidi",
                 matched_signature=f"{total_bidi} hidden zero-width/bidi codepoints",
                 description="Invisible UTF-8 Trojan source/prompt characters detected in skill or MCP manifest.",
+            )
+        )
+
+    for arc_path, member_name in artifact.embedded_archive_scripts:
+        findings.append(
+            ThreatFinding(
+                rule_id="SB-ARC-001",
+                owasp_asi="ASI04:EmbeddedArchiveScript",
+                severity="CRITICAL",
+                layer="archive_container",
+                matched_signature=f"{arc_path}!{member_name}",
+                description="Executable script smuggled inside an OOXML/PKZIP document archive.",
+            )
+        )
+
+    for bc in artifact.bytecode_artifacts:
+        findings.append(
+            ThreatFinding(
+                rule_id="SB-BYT-001",
+                owasp_asi="ASI04:PreCompiledBytecodeShipped",
+                severity="HIGH",
+                layer="bytecode_artifact",
+                matched_signature=bc.rel_path,
+                description="Pre-compiled Python bytecode or binary shipped inside skill bundle.",
+            )
+        )
+        if bc.divergent_symbols:
+            findings.append(
+                ThreatFinding(
+                    rule_id="SB-BYT-002",
+                    owasp_asi="ASI04:BytecodeSourceDivergence",
+                    severity="CRITICAL",
+                    layer="bytecode_artifact",
+                    matched_signature=f"{bc.rel_path}: {', '.join(bc.divergent_symbols)}",
+                    description="Pre-compiled .pyc constant pool contains dangerous capabilities absent from sibling .py source.",
+                )
+            )
+
+    for reg_script, reg_url in artifact.unverified_registries:
+        findings.append(
+            ThreatFinding(
+                rule_id="SB-CFG-001",
+                owasp_asi="ASI04:UnverifiedRegistryOverride",
+                severity="HIGH",
+                layer="companion_script",
+                matched_signature=f"{reg_script} -> {reg_url}",
+                description="Companion script overrides .npmrc/.yarnrc/pip registry to a non-standard host requiring org allowlist verification.",
+            )
+        )
+
+    for hook_script in artifact.git_hook_writes:
+        findings.append(
+            ThreatFinding(
+                rule_id="SB-CFG-002",
+                owasp_asi="ASI05:GitHookPersistence",
+                severity="MEDIUM",
+                layer="companion_script",
+                matched_signature=f"{hook_script} -> .git/hooks/",
+                description="Companion script installs persistent local Git hook executable.",
             )
         )
 
@@ -361,6 +447,45 @@ def audit_skill(
     )
 
 
+def audit_skill_bundle(
+    files: dict[str, bytes],
+    backend: Literal["cpp20", "python"] = "cpp20",
+) -> SkillAuditReport:
+    """Statically audit a multi-file skill bundle in memory without executing any code."""
+    skill_md_bytes = files.get("SKILL.md")
+    if skill_md_bytes is None:
+        for k in sorted(files):
+            if k.endswith("/SKILL.md"):
+                skill_md_bytes = files[k]
+                break
+    skill_md = (
+        skill_md_bytes.decode("utf-8", "replace") if skill_md_bytes else "---\nname: bundle\n---\n"
+    )
+    mcp_bytes = files.get(".mcp.json")
+    mcp_txt = mcp_bytes.decode("utf-8", "replace") if mcp_bytes is not None else None
+    return audit_skill(
+        skill_markdown=skill_md,
+        mcp_json_text=mcp_txt,
+        backend=backend,
+        bundle_files=files,
+        enable_vendor_auth_scoping=True,
+    )
+
+
+def audit_skill_directory(
+    directory: Path,
+    backend: Literal["cpp20", "python"] = "cpp20",
+) -> SkillAuditReport:
+    """Read all files under a skill directory into memory (<=8 MB per file) and run static bundle audit."""
+    bundle: dict[str, bytes] = {}
+    for p in sorted(directory.rglob("*")):
+        if p.is_file() and ".git" not in p.parts:
+            if p.stat().st_size <= 8 * 1024 * 1024:
+                rel = p.relative_to(directory).as_posix()
+                bundle[rel] = p.read_bytes()
+    return audit_skill_bundle(bundle, backend=backend)
+
+
 def run_kernel_benchmark(num_docs: int = 5000, iterations: int = 5) -> BenchmarkReport:
     patterns = [(s.pattern, s.category) for s in THREAT_SIGNATURES]
     benign_doc = (
@@ -402,7 +527,6 @@ def run_kernel_benchmark(num_docs: int = 5000, iterations: int = 5) -> Benchmark
         (i, (i + 3) % num_nodes) for i in range(0, num_nodes, 2)
     ]
 
-    # Warmup & verify parity
     cpp_scan = ac_scan_corpus_cpp(patterns, docs)
     py_scan = ac_scan_corpus_py(patterns, docs)
     cpp_taint = prove_taint_reachability_cpp(roles, weights, edges)

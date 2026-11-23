@@ -8,6 +8,25 @@ from pydantic import BaseModel, Field
 
 VerdictLiteral = Literal["PASS", "QUARANTINE", "BLOCK"]
 SeverityLiteral = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+LayerLiteral = Literal[
+    "raw_markdown",
+    "html_comment",
+    "decoded_base64",
+    "unicode_bidi",
+    "mcp_schema",
+    "companion_script",
+    "archive_container",
+    "bytecode_artifact",
+]
+ComponentTypeLiteral = Literal[
+    "skill",
+    "mcp_server",
+    "mcp_tool",
+    "code_block",
+    "companion_script",
+    "archive_container",
+    "bytecode_artifact",
+]
 
 
 class SkillNode(BaseModel):
@@ -31,7 +50,7 @@ class ThreatFinding(BaseModel):
     rule_id: str
     owasp_asi: str
     severity: SeverityLiteral
-    layer: Literal["raw_markdown", "html_comment", "decoded_base64", "unicode_bidi", "mcp_schema"]
+    layer: LayerLiteral
     matched_signature: str
     description: str
 
@@ -52,7 +71,7 @@ class TaintProof(BaseModel):
 
 
 class SkillBomComponent(BaseModel):
-    component_type: Literal["skill", "mcp_server", "mcp_tool", "code_block"]
+    component_type: ComponentTypeLiteral
     name: str
     sha256: str
     capabilities: list[str]
@@ -106,3 +125,46 @@ class BenchmarkReport(BaseModel):
     python_total_ms: float
     speedup_x: float
     parity_verified: bool
+
+
+class ExternalCaseResult(BaseModel):
+    case_id: str
+    corpus_group: Literal[
+        "trailofbits_overtly_malicious",
+        "pure_prose_social_engineering_boundary",
+        "benign_community_upstream",
+    ]
+    source_repo: str
+    commit_sha: str
+    skill_path: str
+    attack_vector: str
+    v1_0_skill_md_only_verdict: VerdictLiteral
+    v1_1_bundle_verdict: VerdictLiteral
+    risk_score: int
+    scan_latency_ms: float
+    matched_rules: list[str]
+    sha256_verified: bool
+
+
+class ExternalBenchmarkReport(BaseModel):
+    schema_version: str
+    backend: Literal["cpp20", "python"]
+    total_cases: int
+    tob_malicious_total: int
+    tob_v1_0_skill_md_only_intercepted: int
+    tob_v1_1_hard_blocked: int
+    tob_v1_1_quarantined: int
+    tob_v1_1_gate_intercept_recall_pct: float
+    tob_v1_1_strict_block_recall_pct: float
+    prose_social_engineering_total: int
+    prose_social_engineering_intercepted: int
+    prose_social_engineering_recall_pct: float
+    benign_upstream_total: int
+    benign_v1_0_false_positives: int
+    benign_v1_0_fpr_pct: float
+    benign_v1_1_false_positives: int
+    benign_v1_1_fpr_pct: float
+    total_scan_latency_ms: float
+    mean_scan_latency_ms: float
+    handoff_boundary_note: str
+    results: list[ExternalCaseResult]

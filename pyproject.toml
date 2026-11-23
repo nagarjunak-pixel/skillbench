@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "skillbench"
-version = "1.0.0"
+version = "1.1.0"
 description = "Enterprise Agent-Skill (SKILL.md & MCP) Static Information-Flow Taint Analyzer, C++20 Aho-Corasick Injection/Exfiltration Prover & Behavioral CI Regression Suite"
 readme = "README.md"
 license = { text = "Apache-2.0" }
