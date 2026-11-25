@@ -119,5 +119,5 @@ uv run skillbench serve --port 8170
 **Nagarjuna Kamireddy** — Lead AI Architect | AI Solutions Architect | GenAI Lead (22 years enterprise IT experience)  
 - Portfolio & Technical Handbooks: [https://nagarjunak-pixel.github.io](https://nagarjunak-pixel.github.io)  
 - GitHub: [https://github.com/nagarjunak-pixel](https://github.com/nagarjunak-pixel)  
-- Contact: `writetonagarjuna@gmail.com` · `gmailtonagarjuna@gmail.com`  
+- Contact: `writetonagarjuna@gmail.com`  
 - License: Apache-2.0
